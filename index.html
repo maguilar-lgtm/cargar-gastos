@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111111">
+  <title>Cargar gasto</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f5f6f8;color:#171717}
+    .wrap{max-width:560px;margin:0 auto;padding:16px}
+    .card{background:#fff;border-radius:18px;padding:20px;box-shadow:0 8px 28px rgba(0,0,0,.08)}
+    h1{font-size:26px;margin:0 0 5px}.sub{color:#666;margin:0 0 18px}
+    label{display:block;font-weight:650;margin:14px 0 6px}
+    input,select,textarea,button{width:100%;font:inherit;border-radius:12px}
+    input,select,textarea{padding:13px;border:1px solid #d7d9dd;background:#fff;color:#171717}
+    textarea{min-height:84px;resize:vertical}
+    button{border:0;padding:14px;font-weight:750;cursor:pointer}
+    button:disabled{opacity:.55;cursor:wait}
+    .primary{background:#111;color:#fff;margin-top:18px}
+    .secondary{background:#eceef1;color:#222;margin-top:8px}
+    .hidden{display:none}
+    .msg{margin-top:14px;padding:12px;border-radius:12px;line-height:1.35}
+    .ok{background:#e8f7ed;color:#176b34}.err{background:#fdecec;color:#9b1c1c}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .hint{font-size:12px;color:#777;margin-top:5px}
+    .locked{padding:13px;background:#f0f2f5;border-radius:12px;margin-bottom:10px}
+    .branch{background:#f7f8fa;border:1px solid #e5e7eb;padding:12px;border-radius:12px}
+    .brand{font-size:13px;font-weight:700;letter-spacing:.04em;color:#777;text-transform:uppercase;margin-bottom:9px}
+    @media(max-width:480px){.grid{grid-template-columns:1fr}.wrap{padding:10px}.card{padding:16px}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="brand">Distribuidora</div>
+    <h1>💸 Cargar gasto</h1>
+    <p class="sub">Carga rápida desde el celular</p>
+
+    <div id="lock">
+      <label for="pin">PIN</label>
+      <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 dígitos">
+      <label style="font-weight:500"><input id="remember" type="checkbox" style="width:auto"> Recordar PIN en este celular</label>
+      <button class="primary" id="unlock" type="button">Desbloquear</button>
+    </div>
+
+    <form id="form" class="hidden">
+      <div class="locked">🔓 Formulario habilitado</div>
+
+      <label for="branch">Sucursal</label>
+      <select id="branch" class="branch" required>
+        <option value="CASA_CENTRAL">Casa Central</option>
+        <option value="MAHS">MAHS</option>
+      </select>
+
+      <div class="grid">
+        <div>
+          <label for="date">Fecha</label>
+          <input id="date" type="date" required>
+        </div>
+        <div>
+          <label for="spent">Quién hizo el gasto</label>
+          <select id="spent" required>
+            <option value="Maca">Maca</option>
+            <option value="Marcos">Marcos</option>
+            <option value="Otro">Otro</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="spentOtherBox" class="hidden">
+        <label for="spentOther">Nombre</label>
+        <input id="spentOther">
+      </div>
+
+      <label for="amount">Importe</label>
+      <input id="amount" inputmode="decimal" placeholder="Ej. 18500" required>
+
+      <label for="account">Cuenta de donde salió</label>
+      <select id="account" required></select>
+      <div id="accountOtherBox" class="hidden">
+        <label for="accountOther">Otra cuenta</label>
+        <input id="accountOther">
+      </div>
+
+      <label for="center">Centro de gasto</label>
+      <select id="center" required></select>
+      <div id="centerOtherBox" class="hidden">
+        <label for="centerOther">Otro centro</label>
+        <input id="centerOther">
+      </div>
+
+      <label for="desc">Concepto / proveedor</label>
+      <textarea id="desc" placeholder="Ej. Combustible YPF, compra de insumos, retiro personal..."></textarea>
+
+      <label for="receipt">Foto del comprobante <span style="font-weight:400">(opcional)</span></label>
+      <input id="receipt" type="file" accept="image/*" capture="environment">
+      <div class="hint">La foto se comprime antes de enviarse.</div>
+
+      <button class="primary" type="submit">Guardar gasto</button>
+      <button class="secondary" id="forget" type="button">Olvidar PIN</button>
+    </form>
+
+    <div id="msg"></div>
+  </div>
+</div>
+
+<script>
+const API_URL = "https://iypzbrmobrilwsyvrmrh.supabase.co/functions/v1/cargar-gasto";
+const $ = id => document.getElementById(id);
+let activePin = "";
+let cfg = null;
+
+$("date").value = new Date().toLocaleDateString("en-CA");
+
+function showMessage(text, ok) {
+  $("msg").className = "msg " + (ok ? "ok" : "err");
+  $("msg").textContent = text;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
+}
+
+function fillSelect(select, items) {
+  select.innerHTML = items.map(x => `<option value="${escapeHtml(x)}">${escapeHtml(x)}</option>`).join("") + '<option value="__other">Otra...</option>';
+  select.dispatchEvent(new Event("change"));
+}
+
+function refreshBranch() {
+  if (!cfg) return;
+  const branch = $("branch").value;
+  fillSelect($("account"), cfg.accounts[branch] || []);
+  fillSelect($("center"), cfg.centers[branch] || []);
+}
+
+async function api(body) {
+  const response = await fetch(API_URL, {
+    method: "POST",
+    headers: {"content-type":"application/json"},
+    body: JSON.stringify(body)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "Error de conexión");
+  return data;
+}
+
+async function unlock(pin) {
+  try {
+    const data = await api({action:"config", pin});
+    activePin = pin;
+    cfg = data;
+    refreshBranch();
+    $("lock").classList.add("hidden");
+    $("form").classList.remove("hidden");
+    showMessage("Listo para cargar gastos.", true);
+    return true;
+  } catch (e) {
+    showMessage(e.message === "blocked" ? "Demasiados intentos. Probá nuevamente en 15 minutos." : "PIN incorrecto o no se pudo conectar.", false);
+    return false;
+  }
+}
+
+$("unlock").onclick = async () => {
+  const pin = $("pin").value.trim();
+  if (await unlock(pin) && $("remember").checked) localStorage.setItem("expense_pin", pin);
+};
+
+$("pin").addEventListener("keydown", e => { if (e.key === "Enter") $("unlock").click(); });
+$("branch").onchange = refreshBranch;
+$("spent").onchange = () => $("spentOtherBox").classList.toggle("hidden", $("spent").value !== "Otro");
+$("account").onchange = () => $("accountOtherBox").classList.toggle("hidden", $("account").value !== "__other");
+$("center").onchange = () => $("centerOtherBox").classList.toggle("hidden", $("center").value !== "__other");
+$("forget").onclick = () => { localStorage.removeItem("expense_pin"); location.reload(); };
+
+async function imageData(file) {
+  if (!file) return null;
+  const img = await new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = reject;
+    i.src = URL.createObjectURL(file);
+  });
+  let w = img.width, h = img.height;
+  const max = 1280;
+  if (Math.max(w,h) > max) {
+    const scale = max / Math.max(w,h);
+    w = Math.round(w * scale);
+    h = Math.round(h * scale);
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL("image/jpeg", .72);
+}
+
+$("form").onsubmit = async e => {
+  e.preventDefault();
+  const button = e.submitter;
+  button.disabled = true;
+  button.textContent = "Guardando...";
+  try {
+    const spent = $("spent").value === "Otro" ? $("spentOther").value.trim() : $("spent").value;
+    const account = $("account").value === "__other" ? $("accountOther").value.trim() : $("account").value;
+    const center = $("center").value === "__other" ? $("centerOther").value.trim() : $("center").value;
+    if (!spent || !account || !center) throw new Error("Completá los campos obligatorios.");
+
+    const file = $("receipt").files[0];
+    const receipt = await imageData(file);
+    const data = await api({
+      action:"submit",
+      pin:activePin,
+      branch:$("branch").value,
+      expense_date:$("date").value,
+      amount:$("amount").value,
+      spent_by:spent,
+      account,
+      cost_center:center,
+      description:$("desc").value.trim(),
+      receipt_image:receipt,
+      receipt_name:file ? file.name : null
+    });
+
+    showMessage(`✅ Gasto guardado en ${data.branch === "MAHS" ? "MAHS" : "Casa Central"}: $${Number(data.amount).toLocaleString("es-AR")}`, true);
+    $("amount").value = "";
+    $("desc").value = "";
+    $("receipt").value = "";
+    $("amount").focus();
+  } catch (e) {
+    const labels = {
+      cross_branch_account:"La cuenta seleccionada pertenece a otra sucursal.",
+      cross_branch_center:"El centro seleccionado pertenece a otra sucursal.",
+      receipt_too_large:"La imagen es demasiado grande.",
+      missing_or_invalid_fields:"Revisá los datos ingresados."
+    };
+    showMessage("No se pudo guardar: " + (labels[e.message] || e.message), false);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Guardar gasto";
+  }
+};
+
+const savedPin = localStorage.getItem("expense_pin");
+if (savedPin) {
+  $("pin").value = savedPin;
+  $("remember").checked = true;
+  unlock(savedPin);
+}
+</script>
+</body>
+</html>
