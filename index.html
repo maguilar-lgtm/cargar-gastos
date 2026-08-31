@@ -19,7 +19,7 @@
     button:disabled{opacity:.55;cursor:wait}
     .primary{background:#111;color:#fff;margin-top:18px}
     .secondary{background:#eceef1;color:#222;margin-top:8px}
-    .hidden{display:none}
+    .hidden{display:none!important}
     .msg{margin-top:14px;padding:12px;border-radius:12px;line-height:1.35}
     .ok{background:#e8f7ed;color:#176b34}.err{background:#fdecec;color:#9b1c1c}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -27,7 +27,14 @@
     .locked{padding:13px;background:#f0f2f5;border-radius:12px;margin-bottom:10px}
     .branch{background:#f7f8fa;border:1px solid #e5e7eb;padding:12px;border-radius:12px}
     .brand{font-size:13px;font-weight:700;letter-spacing:.04em;color:#777;text-transform:uppercase;margin-bottom:9px}
-    @media(max-width:480px){.grid{grid-template-columns:1fr}.wrap{padding:10px}.card{padding:16px}}
+    .success-overlay{position:fixed;inset:0;background:rgba(0,0,0,.58);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9999}
+    .success-box{width:min(460px,100%);background:#fff;border-radius:24px;padding:28px 22px;text-align:center;box-shadow:0 20px 70px rgba(0,0,0,.28)}
+    .success-icon{font-size:58px;line-height:1;margin-bottom:10px}
+    .success-title{font-size:30px;font-weight:850;margin:0 0 8px;color:#176b34}
+    .success-amount{font-size:38px;font-weight:900;margin:6px 0 8px;letter-spacing:-.02em}
+    .success-detail{font-size:16px;color:#555;margin:0 0 20px;line-height:1.4}
+    .success-box button{font-size:18px;padding:16px}
+    @media(max-width:480px){.grid{grid-template-columns:1fr}.wrap{padding:10px}.card{padding:16px}.success-title{font-size:27px}.success-amount{font-size:34px}}
   </style>
 </head>
 <body>
@@ -97,11 +104,21 @@
       <input id="receipt" type="file" accept="image/*" capture="environment">
       <div class="hint">La foto se comprime antes de enviarse.</div>
 
-      <button class="primary" type="submit">Guardar gasto</button>
+      <button class="primary" id="saveBtn" type="submit">Guardar gasto</button>
       <button class="secondary" id="forget" type="button">Olvidar PIN</button>
     </form>
 
     <div id="msg"></div>
+  </div>
+</div>
+
+<div id="successOverlay" class="success-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="successTitle">
+  <div class="success-box">
+    <div class="success-icon">✅</div>
+    <h2 id="successTitle" class="success-title">GASTO GUARDADO</h2>
+    <div id="successAmount" class="success-amount"></div>
+    <p id="successDetail" class="success-detail"></p>
+    <button id="newExpense" class="primary" type="button">Cargar otro gasto</button>
   </div>
 </div>
 
@@ -110,6 +127,7 @@ const API_URL = "https://iypzbrmobrilwsyvrmrh.supabase.co/functions/v1/cargar-ga
 const $ = id => document.getElementById(id);
 let activePin = "";
 let cfg = null;
+let submitLocked = false;
 
 $("date").value = new Date().toLocaleDateString("en-CA");
 
@@ -172,6 +190,13 @@ $("spent").onchange = () => $("spentOtherBox").classList.toggle("hidden", $("spe
 $("account").onchange = () => $("accountOtherBox").classList.toggle("hidden", $("account").value !== "__other");
 $("center").onchange = () => $("centerOtherBox").classList.toggle("hidden", $("center").value !== "__other");
 $("forget").onclick = () => { localStorage.removeItem("expense_pin"); location.reload(); };
+$("newExpense").onclick = () => {
+  $("successOverlay").classList.add("hidden");
+  submitLocked = false;
+  $("saveBtn").disabled = false;
+  $("saveBtn").textContent = "Guardar gasto";
+  $("amount").focus();
+};
 
 async function imageData(file) {
   if (!file) return null;
@@ -196,7 +221,9 @@ async function imageData(file) {
 
 $("form").onsubmit = async e => {
   e.preventDefault();
-  const button = e.submitter;
+  if (submitLocked) return;
+  submitLocked = true;
+  const button = $("saveBtn");
   button.disabled = true;
   button.textContent = "Guardando...";
   try {
@@ -221,12 +248,16 @@ $("form").onsubmit = async e => {
       receipt_name:file ? file.name : null
     });
 
-    showMessage(`✅ Gasto guardado en ${data.branch === "MAHS" ? "MAHS" : "Casa Central"}: $${Number(data.amount).toLocaleString("es-AR")}`, true);
+    const formatted = "$" + Number(data.amount).toLocaleString("es-AR");
+    $("successAmount").textContent = formatted;
+    $("successDetail").textContent = `Guardado correctamente en ${data.branch === "MAHS" ? "MAHS" : "Casa Central"}.`;
+    $("successOverlay").classList.remove("hidden");
+    showMessage(`✅ Gasto guardado: ${formatted}`, true);
     $("amount").value = "";
     $("desc").value = "";
     $("receipt").value = "";
-    $("amount").focus();
   } catch (e) {
+    submitLocked = false;
     const labels = {
       cross_branch_account:"La cuenta seleccionada pertenece a otra sucursal.",
       cross_branch_center:"El centro seleccionado pertenece a otra sucursal.",
@@ -234,7 +265,6 @@ $("form").onsubmit = async e => {
       missing_or_invalid_fields:"Revisá los datos ingresados."
     };
     showMessage("No se pudo guardar: " + (labels[e.message] || e.message), false);
-  } finally {
     button.disabled = false;
     button.textContent = "Guardar gasto";
   }
